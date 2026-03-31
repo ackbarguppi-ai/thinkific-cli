@@ -57,10 +57,10 @@ export class ThinkificAPI {
         path: url.pathname + url.search,
         method: options.method,
         headers: {
-          'X-Auth-API-Key': this.token,
-          'X-Auth-Subdomain': this.subdomain,
+          'Authorization': `Bearer ${this.token}`,
           'Content-Type': 'application/json',
           'Accept': 'application/json',
+          'User-Agent': 'ThinkificCLI/1.0 (Node.js)',
         },
       };
 
