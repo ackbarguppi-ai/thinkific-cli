@@ -1,0 +1,30 @@
+{
+  "name": "thinkific-cli",
+  "version": "1.0.0",
+  "description": "CLI tool for the Thinkific API",
+  "main": "dist/index.js",
+  "bin": {
+    "thinkific": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": ["thinkific", "cli", "lms", "courses"],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": ["dist"],
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "cli-table3": "^0.6.5",
+    "commander": "^12.1.0",
+    "ora": "^5.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0"
+  }
+}
