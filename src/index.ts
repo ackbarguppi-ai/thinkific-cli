@@ -18,6 +18,7 @@ import { registerSiteCommands } from './commands/site';
 import { registerPublishRequestsCommands } from './commands/publish-requests';
 import { registerExternalOrdersCommands } from './commands/external-orders';
 import { registerProfileFieldsCommands } from './commands/profile-fields';
+import { registerPerformanceCommands } from './commands/performance';
 
 const program = new Command();
 
@@ -43,5 +44,6 @@ registerSiteCommands(program);
 registerPublishRequestsCommands(program);
 registerExternalOrdersCommands(program);
 registerProfileFieldsCommands(program);
+registerPerformanceCommands(program);
 
 program.parse();

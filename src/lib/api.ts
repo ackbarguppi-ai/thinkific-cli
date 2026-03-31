@@ -1,6 +1,7 @@
 import https from 'https';
 import http from 'http';
 import { URL } from 'url';
+import { RequestCoalescer } from './batch.js';
 
 const BASE_URL = 'https://api.thinkific.com/api/public/v1';
 const MAX_RETRIES = 3;
@@ -60,10 +61,24 @@ class SimpleCache {
   delete(key: string): void {
     this.cache.delete(key);
   }
+
+  cleanup(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.cache.entries()) {
+      if (now > entry.expiresAt) {
+        this.cache.delete(key);
+      }
+    }
+  }
+
+  get size(): number {
+    return this.cache.size;
+  }
 }
 
-/** Global cache instance */
+// Clean up global cache every 60 seconds
 const globalCache = new SimpleCache(5000);
+setInterval(() => globalCache.cleanup(), 60000);
 
 interface RequestOptions {
   method: string;
@@ -100,6 +115,7 @@ export interface PerformanceMetrics {
   totalRequests: number;
   cacheHits: number;
   cacheMisses: number;
+  coalescedRequests: number;
   averageLatency: number;
   errors: number;
 }
@@ -112,14 +128,17 @@ export class ThinkificAPI {
     totalRequests: 0,
     cacheHits: 0,
     cacheMisses: 0,
+    coalescedRequests: 0,
     totalLatency: 0,
     errors: 0,
   };
+  private requestCoalescer: RequestCoalescer<string, unknown>;
 
   constructor(token: string, subdomain: string, cacheTTL = 5000) {
     this.token = token;
     this.subdomain = subdomain;
     this.cache = new SimpleCache(cacheTTL);
+    this.requestCoalescer = new RequestCoalescer((key) => key);
   }
 
   /** Get current performance metrics */
@@ -131,6 +150,7 @@ export class ThinkificAPI {
       totalRequests: this.metrics.totalRequests,
       cacheHits: this.metrics.cacheHits,
       cacheMisses: this.metrics.cacheMisses,
+      coalescedRequests: this.metrics.coalescedRequests,
       averageLatency: Math.round(avgLatency),
       errors: this.metrics.errors,
     };
@@ -141,6 +161,11 @@ export class ThinkificAPI {
     this.cache.clear();
   }
 
+  /** Get cache statistics */
+  getCacheStats(): { size: number } {
+    return { size: this.cache.size };
+  }
+
   private getCacheKey(options: RequestOptions): string {
     const params = options.params ? new URLSearchParams(
       Object.entries(options.params).map(([k, v]) => [k, String(v)])
@@ -148,13 +173,14 @@ export class ThinkificAPI {
     return `${options.method}:${options.path}:${params}`;
   }
 
-  private async request<T>(options: RequestOptions, retryCount = 0): Promise<T> {
+  async request<T>(options: RequestOptions, retryCount = 0): Promise<T> {
     const startTime = Date.now();
     this.metrics.totalRequests++;
 
+    const cacheKey = this.getCacheKey(options);
+
     // Check cache for GET requests
     if (options.method === 'GET' && !options.skipCache) {
-      const cacheKey = this.getCacheKey(options);
       const cached = this.cache.get<T>(cacheKey);
       if (cached !== undefined) {
         this.metrics.cacheHits++;
@@ -163,6 +189,23 @@ export class ThinkificAPI {
       this.metrics.cacheMisses++;
     }
 
+    // Use request coalescing for GET requests
+    if (options.method === 'GET') {
+      return this.requestCoalescer.execute(cacheKey, async () => {
+        this.metrics.coalescedRequests++;
+        return this.executeRequest<T>(options, cacheKey, startTime, retryCount);
+      }) as Promise<T>;
+    }
+
+    return this.executeRequest<T>(options, cacheKey, startTime, retryCount);
+  }
+
+  private async executeRequest<T>(
+    options: RequestOptions,
+    cacheKey: string,
+    startTime: number,
+    retryCount = 0
+  ): Promise<T> {
     const url = new URL(BASE_URL + options.path);
     if (options.params) {
       for (const [key, value] of Object.entries(options.params)) {
@@ -206,7 +249,9 @@ export class ThinkificAPI {
           if (status === 429 && retryCount < MAX_RETRIES) {
             const retryAfter = parseInt(res.headers['retry-after'] as string, 10) || (retryCount + 1) * 2;
             setTimeout(() => {
-              this.request<T>(options, retryCount + 1).then(resolve).catch(reject);
+              this.executeRequest<T>(options, cacheKey, startTime, retryCount + 1)
+                .then(resolve)
+                .catch(reject);
             }, retryAfter * 1000);
             return;
           }
@@ -253,7 +298,6 @@ export class ThinkificAPI {
 
           // Cache successful GET responses
           if (options.method === 'GET' && !options.skipCache) {
-            const cacheKey = this.getCacheKey(options);
             this.cache.set(cacheKey, data as T, options.cacheTTL);
           }
 
@@ -278,8 +322,8 @@ export class ThinkificAPI {
     });
   }
 
-  async get<T>(path: string, params?: Record<string, string | number | undefined>, cacheTTL?: number): Promise<T> {
-    return this.request<T>({ method: 'GET', path, params, cacheTTL });
+  async get<T>(path: string, params?: Record<string, string | number | undefined>, options?: { cacheTTL?: number; skipCache?: boolean }): Promise<T> {
+    return this.request<T>({ method: 'GET', path, params, ...options });
   }
 
   async post<T>(path: string, body?: unknown): Promise<T> {
@@ -300,10 +344,11 @@ export class ThinkificAPI {
 
   /**
    * Fetch all paginated items efficiently using concurrent requests.
-   * First fetches page 1, then fetches all remaining pages in parallel.
+   * Uses batching to avoid overwhelming the API while maximizing throughput.
    */
-  async getAll<T>(path: string, params?: Record<string, string | number | undefined>): Promise<T[]> {
+  async getAll<T>(path: string, params?: Record<string, string | number | undefined>, options?: { batchSize?: number }): Promise<T[]> {
     const limit = 250;
+    const batchSize = options?.batchSize ?? 5;
     
     // First request to get pagination info
     const firstPage = await this.get<PaginatedResponse<T>>(path, {
@@ -315,24 +360,27 @@ export class ThinkificAPI {
     const allItems: T[] = [...(firstPage.items || [])];
     const totalPages = firstPage.meta?.pagination?.total_pages || 1;
     
-    // If more pages, fetch them in parallel
+    // Fetch remaining pages in batches
     if (totalPages > 1) {
-      const remainingPromises: Promise<PaginatedResponse<T>>[] = [];
-      
-      for (let page = 2; page <= totalPages; page++) {
-        remainingPromises.push(
-          this.get<PaginatedResponse<T>>(path, {
-            ...params,
-            page,
-            limit,
-          })
-        );
-      }
-      
-      const remainingPages = await Promise.all(remainingPromises);
-      for (const page of remainingPages) {
-        if (page.items) {
-          allItems.push(...page.items);
+      for (let batchStart = 2; batchStart <= totalPages; batchStart += batchSize) {
+        const batchEnd = Math.min(batchStart + batchSize - 1, totalPages);
+        const promises: Promise<PaginatedResponse<T>>[] = [];
+        
+        for (let page = batchStart; page <= batchEnd; page++) {
+          promises.push(
+            this.get<PaginatedResponse<T>>(path, {
+              ...params,
+              page,
+              limit,
+            })
+          );
+        }
+        
+        const results = await Promise.all(promises);
+        for (const page of results) {
+          if (page.items) {
+            allItems.push(...page.items);
+          }
         }
       }
     }
