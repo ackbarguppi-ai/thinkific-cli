@@ -1,7 +1,7 @@
 {
   "name": "thinkific-cli",
   "version": "1.0.0",
-  "description": "CLI tool for the Thinkific API",
+  "description": "CLI tool for the Thinkific API — manage courses, users, enrollments, orders, and more from the terminal.",
   "main": "dist/index.js",
   "bin": {
     "thinkific": "./dist/index.js"
@@ -11,8 +11,13 @@
     "dev": "tsc --watch",
     "prepublishOnly": "npm run build"
   },
-  "keywords": ["thinkific", "cli", "lms", "courses"],
+  "keywords": ["thinkific", "cli", "lms", "courses", "education", "enrollments"],
+  "author": "Greg Smith",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ackbarguppi-ai/thinkific-cli"
+  },
   "engines": {
     "node": ">=18.0.0"
   },
@@ -21,14 +26,6 @@
     "chalk": "^4.1.2",
     "cli-table3": "^0.6.5",
     "commander": "^12.1.0",
-    "ora": "^5.4.1"
-  },
-  "devDependencies": {
-    "@types/node": "^20.14.0",
-    "typescript": "^5.5.0"
-  }
-}
-mmander": "^12.1.0",
     "ora": "^5.4.1"
   },
   "devDependencies": {
