@@ -16,11 +16,19 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "files": ["dist"],
+  "files": ["dist", "README.md", "LICENSE"],
   "dependencies": {
     "chalk": "^4.1.2",
     "cli-table3": "^0.6.5",
     "commander": "^12.1.0",
+    "ora": "^5.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0"
+  }
+}
+mmander": "^12.1.0",
     "ora": "^5.4.1"
   },
   "devDependencies": {
